@@ -74,6 +74,28 @@ Speech-to-text IPC sends recorded desktop audio through the Hermes API server, n
 
 [[src/main/ipc/register.ts#registerIpcHandlers]] exposes `transcribe-audio` for the preload bridge, and [[src/main/hermes.ts#transcribeAudio]] posts a base64 data URL to `/api/audio/transcribe`. If the local gateway lacks that desktop route, it falls back to the Python `tools.transcription_tools.transcribe_audio` dispatcher, so local Whisper, Groq, OpenAI, ElevenLabs, and command/plugin STT providers remain independent from the selected chat model.
 
+## SSH credential persistence
+
+Every Desktop SSH `.env` update uses a remote-side locked transaction, so overlapping dashboard, API-server, and provider writes preserve unrelated credentials.
+
+[[src/main/ssh-remote.ts#sshSetEnvValue]], [[src/main/ssh-remote.ts#sshEnsureDashboardToken]], and [[src/main/ssh-remote.ts#sshEnsureApiServerKey]] share [[src/main/ssh-env-update.ts#REMOTE_ENV_UPDATE_SCRIPT]]. Dashboard port persistence uses the same setter. Paths and values travel as JSON on stdin, never as credential-bearing shell arguments.
+
+The Python standard-library helper locks a stable sibling `.env.lock` before reading, choosing credentials, or updating keys. It writes and fsyncs a same-directory temporary file before atomic replacement; read, metadata, write, and replacement failures propagate without a truncation fallback. Existing owner/group and mode are preserved, symlinks keep pointing to their resolved target, and first-time provisioning creates a missing file with mode 0600. Lock acquisition times out after ten seconds. The lock file remains in place so waiting processes always lock the same inode.
+
+This lock coordinates Desktop writers across processes and connections. Independent Agent or manual writers do not yet share it; their updates should not be run concurrently with Desktop credential changes. A mounted file that cannot be atomically replaced produces an error instead of an unsafe in-place overwrite.
+
+### Concurrent writers
+
+Independent token, port, API-server, and provider updates wait for the same remote lock and preserve all unrelated credentials and each other's completed changes.
+
+### Stable provisioning
+
+Simultaneous connections generate a missing token or API key only once, reuse the stored value, and canonicalize duplicate assignments while preserving unrelated lines.
+
+### Failure preservation
+
+Read, fsync, and replacement failures leave the original credential file byte-identical, clean up temporary files, and reach the caller as errors.
+
 ## SSH dashboard transport
 
 SSH mode has two chat transports because the remote serves chat from **two different servers**, and the desktop must reach the right one.
@@ -101,9 +123,9 @@ Because the launch-time SSH connect (the splash "Starting SSH tunnel…" step in
 
 The gateway `/v1` chat path is the no-build SSH transport (and the only one on gateway-only installs that lack the dashboard web dist), but it requires the remote api_server to be configured — which SSH mode, unlike local mode, never did.
 
-The gateway only loads the api_server platform when `API_SERVER_ENABLED` is truthy (`gateway/config.py`), and the api_server refuses to bind without `API_SERVER_KEY`. Local mode writes both via `startGateway`; SSH mode previously only **read** the key, so a fresh server had no `/v1` endpoint at all and every chat failed. [[src/main/ssh-remote.ts#sshEnsureApiServerKey]] now ensures both on the remote `.env` (per profile): it generates + writes `API_SERVER_KEY` when missing/invalid ([[src/main/ssh-remote.ts#isUsableApiServerKey]] rejects empty, <16-char, and placeholder keys) and sets `API_SERVER_ENABLED=true`, returning whether anything was written. [[src/main/ipc/register.ts#prepareSshTunnel]]'s gateway branch calls it, then starts the gateway if down — or stops+starts it when the env was just written so the running gateway picks up the new api_server config — and waits for the api_server `/health` ([[src/main/ssh-remote.ts#sshWaitGatewayApiReady]]) before opening the tunnel, so the first chat doesn't race "tunnel health check failed". A `false` readiness result (health never bound within the timeout — fresh or slow remotes) makes `prepareSshTunnel` **throw** instead of opening the tunnel and caching the key: reporting success with an unbound `/v1` just deferred the failure to the first chat with a less actionable connection error. Chat then POSTs `/v1` over the tunnel with that key cached via `setSshRemoteApiKey`.
+The gateway only loads the api_server platform when `API_SERVER_ENABLED` is truthy (`gateway/config.py`), and the api_server refuses to bind without `API_SERVER_KEY`. Local mode writes both via `startGateway`; SSH mode previously only **read** the key, so a fresh server had no `/v1` endpoint at all and every chat failed. [[src/main/ssh-remote.ts#sshEnsureApiServerKey]] now ensures both on the remote `.env` (per profile): it generates + writes `API_SERVER_KEY` when missing/invalid (the remote transaction rejects empty, <16-character, and placeholder keys) and sets `API_SERVER_ENABLED=true`, returning whether anything was written. [[src/main/ipc/register.ts#prepareSshTunnel]]'s gateway branch calls it, then starts the gateway if down — or stops+starts it when the env was just written so the running gateway picks up the new api_server config — and waits for the api_server `/health` ([[src/main/ssh-remote.ts#sshWaitGatewayApiReady]]) before opening the tunnel, so the first chat doesn't race "tunnel health check failed". A `false` readiness result (health never bound within the timeout — fresh or slow remotes) makes `prepareSshTunnel` **throw** instead of opening the tunnel and caching the key: reporting success with an unbound `/v1` just deferred the failure to the first chat with a less actionable connection error. Chat then POSTs `/v1` over the tunnel with that key cached via `setSshRemoteApiKey`.
 
-These `.env` writes go through [[src/main/ssh-remote.ts#upsertEnvLine]], which rewrites the first matching line and **drops any later duplicates**. Both `sshReadEnv` and the remote gateway's dotenv are last-wins, and pre-dedup desktops left `.env` files with several `API_SERVER_KEY` lines — replacing only the first while a stale later line survived meant the gateway kept the old key while the desktop cached the new one, a permanent 401. Writes self-heal that corruption, matching the canonical-line writers used for the dashboard token and port.
+These `.env` writes use [[main-process#SSH credential persistence]], which rewrites the first matching line and **drops any later duplicates** under the shared remote lock. Both `sshReadEnv` and the remote gateway's dotenv are last-wins, and pre-dedup desktops left `.env` files with several `API_SERVER_KEY` lines — replacing only the first while a stale later line survived meant the gateway kept the old key while the desktop cached the new one, a permanent 401. Writes self-heal that corruption, matching the canonical-line writers used for the dashboard token and port.
 
 ## SSH credential resolution
 
