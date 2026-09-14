@@ -225,7 +225,7 @@ Auxiliary credentials belong to the selected provider and endpoint. Switching ei
 
 [[src/main/auxiliary-config.ts#setAuxiliaryTask]] clears `api_key`, `key_env`, `api_key_env`, legacy `api`, and `api_mode` when routing identity changes or returns to `auto`. A named provider contributes its raw declared `key_env` through [[src/main/agent-config-providers.ts#listAgentUserProviders]] only when the selected endpoint matches that provider or uses its default. Secret values are never expanded into YAML. Native providers resolve their own credentials after old overrides are removed.
 
-[[src/main/auxiliary-config.ts#resetAuxiliaryToAuto]] clears the same overrides for every task. The text editor changes only direct task fields, preserving nested `extra_body`, other tasks, comments, and line endings; unsupported flow mappings fail before writing.
+[[src/main/auxiliary-config.ts#resetAuxiliaryToAuto]] clears the same overrides for every task. The text editor changes only direct task fields, preserving nested `extra_body`, other tasks, comments, and line endings; unsupported flow mappings fail before writing. Quoted credential keys and multiline values are removed completely, including content after blank lines.
 
 ### Provider and endpoint changes
 

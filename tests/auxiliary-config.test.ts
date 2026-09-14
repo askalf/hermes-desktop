@@ -565,4 +565,21 @@ describe("auxiliary credential ownership", () => {
     );
     expect(readFileSync(rootFile, "utf8")).toBe(original);
   });
+  it("removes quoted credential keys and complete multiline values across blank lines", async () => {
+    const path = join(TEST_DIR, "config.yaml");
+    writeFileSync(
+      path,
+      "auxiliary:\n  vision:\n    provider: old\n    \"api_key\": |\n      old-secret\n\n      old-secret-tail\n    'key_env': OLD_KEY\n    timeout: 42\n",
+    );
+    const { setAuxiliaryTask } = await importAuxConfigWithHome(TEST_DIR);
+    setAuxiliaryTask("vision", {
+      provider: "openai",
+      model: "new",
+      baseUrl: "",
+    });
+    const saved = readFileSync(path, "utf8");
+    expect(saved).not.toContain("old-secret");
+    expect(saved).not.toContain("OLD_KEY");
+    expect(saved).toContain("timeout: 42");
+  });
 });

@@ -131,15 +131,24 @@ export function setAuxiliaryField(
     : taskDepth + 2;
   const matches: number[] = [];
   for (let i = taskIdx + 1; i < taskEnd; i++) {
+    const key = lines[i]
+      .trimStart()
+      .match(/^(?:"([^"]+)"|'([^']+)'|([^:\s]+))[ \t]*:/);
     if (
       indentOf(lines[i]) === fieldDepth &&
-      lines[i].trimStart().startsWith(`${field}:`)
-    )
+      key &&
+      (key[1] || key[2] || key[3]) === field
+    ) {
       matches.push(i);
+    }
   }
   for (const index of [...matches].reverse()) {
     let end = index + 1;
-    while (end < taskEnd && indentOf(lines[end]) > fieldDepth) end++;
+    while (
+      end < taskEnd &&
+      (!lines[end].trim() || indentOf(lines[end]) > fieldDepth)
+    )
+      end++;
     lines.splice(
       index,
       end - index,
