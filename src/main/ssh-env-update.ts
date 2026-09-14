@@ -142,10 +142,12 @@ def update_env(payload):
             fd, temporary = tempfile.mkstemp(prefix=".env-", suffix=".tmp", dir=directory)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="") as target:
-                    target.write(updated)
-                    target.flush()
+                    # Establish the original access policy before secret bytes
+                    # exist in the temporary file (including inherited ACLs).
                     if previous is not None:
                         copy_security_metadata(path, target.fileno(), previous)
+                    target.write(updated)
+                    target.flush()
                     os.fsync(target.fileno())
                 os.replace(temporary, path)
             finally:

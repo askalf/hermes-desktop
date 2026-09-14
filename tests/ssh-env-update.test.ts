@@ -277,6 +277,18 @@ describe.skipIf(process.platform === "win32")(
       }
     });
 
+    it("sets the original access policy before writing credential bytes", async () => {
+      const path = fixture();
+      const prefix =
+        "import os\n_chmod=os.fchmod\ndef check_empty(fd,mode):\n    assert os.fstat(fd).st_size==0, 'secret bytes written before access policy'\n    _chmod(fd,mode)\nos.fchmod=check_empty\n";
+      await run(
+        path,
+        { operation: "set", key: "NEW_KEY", value: "new" },
+        prefix,
+      );
+      expect(readFileSync(path, "utf8")).toContain("NEW_KEY=new");
+    });
+
     it("preserves the original when security metadata cannot be copied", async () => {
       const path = fixture();
       const original = readFileSync(path);
