@@ -80,7 +80,7 @@ Every Desktop SSH `.env` update uses a remote-side locked transaction, so overla
 
 [[src/main/ssh-remote.ts#sshSetEnvValue]], [[src/main/ssh-remote.ts#sshEnsureDashboardToken]], and [[src/main/ssh-remote.ts#sshEnsureApiServerKey]] share [[src/main/ssh-env-update.ts#REMOTE_ENV_UPDATE_SCRIPT]]. Dashboard port persistence uses the same setter. Paths and values travel as JSON on stdin, never as credential-bearing shell arguments.
 
-The Python standard-library helper locks a stable sibling `.env.lock` before reading, choosing credentials, or updating keys. It writes and fsyncs a same-directory temporary file before atomic replacement; read, metadata, write, and replacement failures propagate without a truncation fallback. Existing owner/group and mode are preserved, symlinks keep pointing to their resolved target, and first-time provisioning creates a missing file with mode 0600. Lock acquisition times out after ten seconds. The lock file remains in place so waiting processes always lock the same inode.
+The Python standard-library helper locks a stable sibling `.env.lock` before reading, choosing credentials, or updating keys. It writes and fsyncs a same-directory temporary file before atomic replacement; read, metadata, write, and replacement failures propagate without a truncation fallback. Existing owner/group, mode, ACLs, extended attributes, and security labels are preserved, symlinks keep pointing to their resolved target, and first-time provisioning creates a missing file with mode 0600. Lock acquisition times out after ten seconds. The lock file remains in place so waiting processes always lock the same inode.
 
 This lock coordinates Desktop writers across processes and connections. Independent Agent or manual writers do not yet share it; their updates should not be run concurrently with Desktop credential changes. A mounted file that cannot be atomically replaced produces an error instead of an unsafe in-place overwrite.
 
@@ -91,6 +91,12 @@ Independent token, port, API-server, and provider updates wait for the same remo
 ### Stable provisioning
 
 Simultaneous connections generate a missing token or API key only once, reuse the stored value, and canonicalize duplicate assignments while preserving unrelated lines.
+
+### Security metadata
+
+Atomic replacement preserves file-specific ACLs and extended attributes, including Linux security labels. Unsupported or failed metadata preservation aborts the update without replacing the original.
+
+Linux uses Python's xattr APIs; macOS uses [Apple's fcopyfile](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/copyfile.3.html) for ACLs and extended attributes. Custom file flags are rejected rather than silently discarded.
 
 ### Failure preservation
 

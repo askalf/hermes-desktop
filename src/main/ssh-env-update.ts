@@ -23,6 +23,39 @@ import tempfile
 import time
 
 
+
+def copy_security_metadata(path, target_fd, previous):
+    current = os.fstat(target_fd)
+    if (current.st_uid, current.st_gid) != (previous.st_uid, previous.st_gid):
+        os.fchown(target_fd, previous.st_uid, previous.st_gid)
+    os.fchmod(target_fd, stat.S_IMODE(previous.st_mode))
+    if getattr(previous, "st_flags", 0):
+        raise OSError("Cannot safely replace a credential file with custom file flags")
+    if sys.platform == "darwin":
+        # Apple's fcopyfile(3): COPYFILE_ACL (1) | COPYFILE_XATTR (4).
+        # Python's os xattr APIs are Linux-only; macOS ACLs need this native API.
+        import ctypes
+        library = ctypes.CDLL(None, use_errno=True)
+        copy = library.fcopyfile
+        copy.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        copy.restype = ctypes.c_int
+        with open(path, "rb") as source:
+            if copy(source.fileno(), target_fd, None, 5) != 0:
+                error = ctypes.get_errno()
+                raise OSError(error, os.strerror(error))
+    elif sys.platform.startswith("linux"):
+        # This includes POSIX access ACLs and security labels. Remove any
+        # directory-inherited attributes absent from the original as well.
+        attributes = {name: os.getxattr(path, name) for name in os.listxattr(path)}
+        for name in os.listxattr(target_fd):
+            if name not in attributes:
+                os.removexattr(target_fd, name)
+        for name, value in attributes.items():
+            os.setxattr(target_fd, name, value)
+    else:
+        raise OSError("Cannot preserve credential security metadata on this remote OS")
+
+
 def update_env(payload):
     path = os.path.realpath(os.path.expanduser(payload["path"]))
     operation = payload["operation"]
@@ -109,13 +142,10 @@ def update_env(payload):
             fd, temporary = tempfile.mkstemp(prefix=".env-", suffix=".tmp", dir=directory)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="") as target:
-                    if previous is not None:
-                        current = os.fstat(target.fileno())
-                        if (current.st_uid, current.st_gid) != (previous.st_uid, previous.st_gid):
-                            os.fchown(target.fileno(), previous.st_uid, previous.st_gid)
-                        os.fchmod(target.fileno(), stat.S_IMODE(previous.st_mode))
                     target.write(updated)
                     target.flush()
+                    if previous is not None:
+                        copy_security_metadata(path, target.fileno(), previous)
                     os.fsync(target.fileno())
                 os.replace(temporary, path)
             finally:

@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { spawn } from "child_process";
+import { spawn, execFileSync } from "child_process";
 import { once } from "events";
 import {
   mkdtempSync,
@@ -204,6 +204,90 @@ describe.skipIf(process.platform === "win32")(
       expect(statSync(path).uid).toBe(before.uid);
       expect(statSync(path).gid).toBe(before.gid);
       expect(statSync(path).mode & 0o777).toBe(0o640);
+    });
+
+    // @lat: [[main-process#Main Process#SSH credential persistence#Security metadata]]
+    it("preserves real access ACLs and extended attributes across replacement", async () => {
+      const path = fixture();
+      let originalAcl: string;
+      if (process.platform === "darwin") {
+        execFileSync("chmod", ["+a", "everyone deny write", path]);
+        execFileSync("xattr", [
+          "-w",
+          "user.hermes-test",
+          "metadata-sentinel",
+          path,
+        ]);
+        originalAcl = execFileSync("ls", ["-le", path], { encoding: "utf8" })
+          .split("\n")
+          .filter((line) => /^\s*\d+:/.test(line))
+          .join("\n");
+      } else {
+        execFileSync("python3", [
+          "-c",
+          "import os,struct,sys; p=sys.argv[1]; acl=struct.pack('<I',2)+b''.join(struct.pack('<HHI',*entry) for entry in [(1,6,0xffffffff),(2,4,65534),(4,4,0xffffffff),(16,4,0xffffffff),(32,0,0xffffffff)]); os.setxattr(p,'system.posix_acl_access',acl); os.setxattr(p,'user.hermes-test',b'metadata-sentinel')",
+          path,
+        ]);
+        originalAcl = execFileSync(
+          "python3",
+          [
+            "-c",
+            "import os,sys; print(os.getxattr(sys.argv[1],'system.posix_acl_access').hex())",
+            path,
+          ],
+          { encoding: "utf8" },
+        );
+      }
+      await run(path, { operation: "set", key: "NEW_KEY", value: "new" });
+      if (process.platform === "darwin") {
+        expect(
+          execFileSync("xattr", ["-p", "user.hermes-test", path], {
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("metadata-sentinel");
+        expect(
+          execFileSync("ls", ["-le", path], { encoding: "utf8" })
+            .split("\n")
+            .filter((line) => /^\s*\d+:/.test(line))
+            .join("\n"),
+        ).toBe(originalAcl);
+      } else {
+        expect(
+          execFileSync(
+            "python3",
+            [
+              "-c",
+              "import os,sys; print(os.getxattr(sys.argv[1],'system.posix_acl_access').hex())",
+              path,
+            ],
+            { encoding: "utf8" },
+          ),
+        ).toBe(originalAcl);
+        expect(
+          execFileSync(
+            "python3",
+            [
+              "-c",
+              "import os,sys; print(os.getxattr(sys.argv[1],'user.hermes-test').decode())",
+              path,
+            ],
+            { encoding: "utf8" },
+          ).trim(),
+        ).toBe("metadata-sentinel");
+      }
+    });
+
+    it("preserves the original when security metadata cannot be copied", async () => {
+      const path = fixture();
+      const original = readFileSync(path);
+      const prefix =
+        process.platform === "darwin"
+          ? "import ctypes\ndef fail(*args,**kwargs):\n    raise PermissionError('metadata failure')\nctypes.CDLL=fail\n"
+          : "import os\ndef fail(*args,**kwargs):\n    raise PermissionError('metadata failure')\nos.listxattr=fail\n";
+      await expect(
+        run(path, { operation: "set", key: "NEW_KEY", value: "new" }, prefix),
+      ).rejects.toThrow("metadata failure");
+      expect(readFileSync(path)).toEqual(original);
     });
 
     it("preserves a symlink and locks its resolved credential file", async () => {
