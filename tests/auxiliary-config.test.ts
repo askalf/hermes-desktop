@@ -582,4 +582,42 @@ describe("auxiliary credential ownership", () => {
     expect(saved).not.toContain("OLD_KEY");
     expect(saved).toContain("timeout: 42");
   });
+  it.each([
+    ["agent-plan", "", "agent-plan", "https://plan.example/v1"],
+    ["agent-plan", "https://plan.example/v1", "agent-plan", ""],
+    ["agent-plan", "", "custom:agent-plan", ""],
+    ["custom:agent-plan", "https://plan.example/v1", "agent-plan", ""],
+  ])(
+    "preserves overrides for equivalent named routes %s %s -> %s %s",
+    async (beforeProvider, beforeUrl, provider, baseUrl) => {
+      const path = join(TEST_DIR, "config.yaml");
+      writeFileSync(
+        path,
+        `providers:\n  agent-plan:\n    base_url: https://plan.example/v1\n    key_env: SHARED_KEY\nauxiliary:\n  vision:\n    provider: ${beforeProvider}\n    base_url: "${beforeUrl}"\n    api_key: task-secret\n    key_env: TASK_OVERRIDE\n    api_mode: codex_responses\n`,
+      );
+      const { setAuxiliaryTask } = await importAuxConfigWithHome(TEST_DIR);
+      setAuxiliaryTask("vision", { provider, model: "new", baseUrl });
+      const saved = readFileSync(path, "utf8");
+      expect(saved).toContain("api_key: task-secret");
+      expect(saved).toContain("key_env: TASK_OVERRIDE");
+      expect(saved).toContain("api_mode: codex_responses");
+    },
+  );
+
+  it("preserves overrides when a native provider default endpoint becomes explicit", async () => {
+    const path = join(TEST_DIR, "config.yaml");
+    writeFileSync(
+      path,
+      "auxiliary:\n  vision:\n    provider: openai\n    api_key: task-secret\n    api_mode: codex_responses\n",
+    );
+    const { setAuxiliaryTask } = await importAuxConfigWithHome(TEST_DIR);
+    setAuxiliaryTask("vision", {
+      provider: "openai",
+      model: "new",
+      baseUrl: "https://api.openai.com/v1/",
+    });
+    const saved = readFileSync(path, "utf8");
+    expect(saved).toContain("api_key: task-secret");
+    expect(saved).toContain("api_mode: codex_responses");
+  });
 });

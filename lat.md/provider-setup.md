@@ -233,7 +233,7 @@ Switching providers or changing an endpoint removes the prior credential aliases
 
 ### Model-only changes
 
-Changing the model under the same provider and normalized endpoint preserves task-specific credentials and transport settings.
+Changing the model under the same effective provider and endpoint preserves task-specific credentials and transport settings. Named-provider aliases and omitted versus explicit default URLs resolve to the same route.
 
 ### Reset persistence
 

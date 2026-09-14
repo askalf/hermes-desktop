@@ -7,7 +7,11 @@
 import { existsSync, readFileSync } from "fs";
 import { profilePaths, safeWriteFile } from "./utils";
 import { getYamlPath } from "./yaml-path";
-import { listAgentUserProviders } from "./agent-config-providers";
+import {
+  listAgentUserProviders,
+  type AgentUserProvider,
+} from "./agent-config-providers";
+import { canonicalProviderBaseUrl } from "./provider-registry";
 import { normalizeModelEndpointUrl } from "../shared/model-endpoint";
 
 // Canonical task slots, ordered to match the agent dashboard UI.
@@ -182,6 +186,27 @@ function clearAuxiliaryCredentials(content: string, task: string): string {
   return content;
 }
 
+function auxiliaryRoute(
+  provider: string,
+  baseUrl: string,
+  providers: AgentUserProvider[],
+): { identity: string; baseUrl: string; named?: AgentUserProvider } {
+  const normalized = provider.trim().toLowerCase() || "auto";
+  const named = providers.find(
+    (entry) => entry.slug.toLowerCase() === normalized.replace(/^custom:/, ""),
+  );
+  return {
+    identity: named ? named.slug.toLowerCase() : normalized,
+    baseUrl: normalizeModelEndpointUrl(
+      baseUrl.trim() ||
+        named?.baseUrl ||
+        canonicalProviderBaseUrl(normalized) ||
+        "",
+    ),
+    named,
+  };
+}
+
 export function setAuxiliaryTask(
   task: string,
   cfg: { provider: string; model: string; baseUrl: string },
@@ -194,20 +219,23 @@ export function setAuxiliaryTask(
   const previousProvider =
     getYamlPath(content, `auxiliary.${task}.provider`) || "auto";
   const previousUrl = getYamlPath(content, `auxiliary.${task}.base_url`) || "";
+  const providers = listAgentUserProviders(profile);
+  const previousRoute = auxiliaryRoute(
+    previousProvider,
+    previousUrl,
+    providers,
+  );
+  const nextRoute = auxiliaryRoute(provider, cfg.baseUrl, providers);
   const changed =
-    provider.toLowerCase() !== previousProvider.toLowerCase() ||
-    normalizeModelEndpointUrl(cfg.baseUrl) !==
-      normalizeModelEndpointUrl(previousUrl);
+    previousRoute.identity !== nextRoute.identity ||
+    previousRoute.baseUrl !== nextRoute.baseUrl;
   if (changed || provider.toLowerCase() === "auto") {
     content = clearAuxiliaryCredentials(content, task);
-    const named = listAgentUserProviders(profile).find(
-      (entry) =>
-        entry.slug.toLowerCase() ===
-          provider.toLowerCase().replace(/^custom:/, "") &&
-        (!cfg.baseUrl.trim() ||
-          normalizeModelEndpointUrl(cfg.baseUrl) ===
-            normalizeModelEndpointUrl(entry.baseUrl)),
-    );
+    const named =
+      nextRoute.named &&
+      nextRoute.baseUrl === normalizeModelEndpointUrl(nextRoute.named.baseUrl)
+        ? nextRoute.named
+        : undefined;
     if (
       provider.toLowerCase() !== "auto" &&
       named &&
