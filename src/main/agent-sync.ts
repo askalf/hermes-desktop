@@ -85,6 +85,25 @@ interface RemoteAgent {
   updatedAt: string;
 }
 
+function isRemoteAgent(value: unknown): value is RemoteAgent {
+  if (!value || typeof value !== "object") return false;
+  const agent = value as Partial<RemoteAgent>;
+  return (
+    typeof agent.id === "string" &&
+    agent.id.length > 0 &&
+    typeof agent.name === "string" &&
+    agent.name.trim().length > 0 &&
+    typeof agent.color === "string" &&
+    /^#[0-9a-fA-F]{6}$/.test(agent.color) &&
+    (agent.systemPrompt === null || typeof agent.systemPrompt === "string") &&
+    (agent.memory === null || typeof agent.memory === "string") &&
+    typeof agent.model === "string" &&
+    typeof agent.provider === "string" &&
+    typeof agent.updatedAt === "string" &&
+    Number.isFinite(Date.parse(agent.updatedAt))
+  );
+}
+
 interface PartValues {
   color: string;
   soul: string;
@@ -243,6 +262,11 @@ export function getLinkedAgentId(profile: string): string | null {
  */
 export function getLinkedAgentAccountId(profile: string): string | null {
   return readSyncState(profile)?.accountId ?? null;
+}
+
+/** Backend ownership used by wallet reads and mutations as well as sync. */
+export function getLinkedAgentApiUrl(profile: string): string | null {
+  return readSyncState(profile)?.apiUrl ?? null;
 }
 
 function clearSyncState(profile: string): void {
@@ -554,14 +578,7 @@ async function runSyncPass(): Promise<AgentSyncResult> {
     }
     if (
       !Array.isArray(res.data?.agents) ||
-      !res.data.agents.every(
-        (agent) =>
-          agent &&
-          typeof agent.id === "string" &&
-          agent.id.length > 0 &&
-          typeof agent.name === "string" &&
-          agent.name.length > 0,
-      )
+      !res.data.agents.every(isRemoteAgent)
     ) {
       return finished({
         status: "error",

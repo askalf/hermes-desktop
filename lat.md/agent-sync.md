@@ -135,3 +135,14 @@ Malformed, missing, or interrupted successful cloud-list responses must leave li
 ### Retains the identity after a failed import
 
 Cloud import records its identity and pre-import local hashes before asynchronous writes. A failed part remains retryable without pushing defaults, and deletion can still exclude the retained cloud copy.
+
+
+### Enforces backend ownership for wallets
+
+Wallet listing, provisioning, and portfolio reads reject a link recorded under another backend even when user ids match. Legacy links must gain a matching backend through sync before wallet requests are allowed.
+
+### Validates all reconciliation fields
+
+Cloud-list responses must include valid identity, color, nullable persona/memory, model/provider, and timestamp fields. Missing or invalid values cannot trigger unlinking or push local defaults over cloud content.
+
+Empty model/provider strings remain accepted because the backend permits them; an empty remote model never clears the local selection.

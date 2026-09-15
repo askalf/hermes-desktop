@@ -919,3 +919,79 @@ describe("sync failures during deletion coordination", () => {
     expect(mockState.createdProfiles).toEqual([]);
   });
 });
+
+describe("complete cloud agent validation", () => {
+  // @lat: [[agent-sync#Tests#Validates all reconciliation fields]]
+  it.each([
+    "id",
+    "name",
+    "color",
+    "systemPrompt",
+    "memory",
+    "model",
+    "provider",
+    "updatedAt",
+  ])(
+    "rejects an agent missing %s before changing any linked profile",
+    async (field) => {
+      const file = linkedProfile();
+      const original = readFileSync(file, "utf-8");
+      const agent = remoteAgent({
+        id: "a1",
+        name: "alpha",
+      }) as unknown as Record<string, unknown>;
+      delete agent[field];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ agents: [agent] }),
+        }),
+      );
+      const result = await (await engine()).syncAgents();
+      expect(result.status).toBe("error");
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(readFileSync(file, "utf-8")).toBe(original);
+      expect(mockState.writtenSouls).toEqual([]);
+      expect(mockState.writtenColors).toEqual([]);
+    },
+  );
+
+  it.each([
+    { updatedAt: "not a date" },
+    { color: "invalid" },
+    { systemPrompt: 42 },
+    { memory: {} },
+    { model: 42 },
+    { provider: null },
+  ])("rejects invalid reconciliation values %j", async (invalid) => {
+    const file = linkedProfile();
+    const agent = { ...remoteAgent({ id: "a1", name: "alpha" }), ...invalid };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ agents: [agent] }),
+      }),
+    );
+    expect((await (await engine()).syncAgents()).status).toBe("error");
+    expect(existsSync(file)).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("accepts backend-supported empty model/provider values without clearing the local model", async () => {
+  linkedProfile();
+  mockState.models.set("alpha", {
+    model: "local-model",
+    provider: "auto",
+    baseUrl: "",
+  });
+  stubFetch([
+    remoteAgent({ id: "a1", name: "alpha", model: "", provider: "" }),
+  ]);
+  expect((await (await engine()).syncAgents()).status).toBe("ok");
+  expect(mockState.writtenModels).toEqual([]);
+});
