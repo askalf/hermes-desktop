@@ -995,3 +995,48 @@ it("accepts backend-supported empty model/provider values without clearing the l
   expect((await (await engine()).syncAgents()).status).toBe("ok");
   expect(mockState.writtenModels).toEqual([]);
 });
+
+// @lat: [[agent-sync#Tests#Waits for ownership adoption already in progress]]
+it("waits for the active sync before resolving a legacy wallet link", async () => {
+  linkedProfile({ apiUrl: undefined });
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      await pending;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          agents: [remoteAgent({ id: "a1", name: "alpha" })],
+        }),
+      };
+    }),
+  );
+  const e = await engine();
+  const pass = e.syncAgents();
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+  const { resolveLinkedAgent } = await import("./wallet-sync");
+  let settled = false;
+  const wallet = resolveLinkedAgent("alpha").then((result) => {
+    settled = true;
+    return result;
+  });
+  // Flush promise reactions while the list response is still pending.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const settledEarly = settled;
+  release();
+  await pass;
+  const result = await wallet;
+  expect(settledEarly).toBe(false);
+  expect(result).toMatchObject({
+    status: "ok",
+    apiUrl: "http://localhost:3002",
+    agentId: "a1",
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(e.getAgentSyncStatus().running).toBe(false);
+});

@@ -6,7 +6,7 @@ Phase 1 covers the free parts from the backend's `docs/agent-sync.md`: color, pe
 
 ## Sync engine
 
-[[src/main/agent-sync.ts#syncAgents]] runs one single-flight pass: link local profiles to cloud agents, reconcile each part, create missing counterparts on both sides, and unlink mappings whose cloud agent disappeared.
+[[src/main/agent-sync.ts#syncAgents]] runs one single-flight pass, shared by overlapping callers until it finishes: link local profiles to cloud agents, reconcile each part, create missing counterparts on both sides, and unlink mappings whose cloud agent disappeared.
 
 The stored link (a profile's cloud `agentId`) is also read by [[wallet-token-balances#Wallet Sync]] via [[src/main/agent-sync.ts#getLinkedAgentId]], so backend-provisioned wallets can be fetched for the same agent.
 
@@ -146,3 +146,8 @@ Wallet listing, provisioning, and portfolio reads reject a link recorded under a
 Cloud-list responses must include valid identity, color, nullable persona/memory, model/provider, and timestamp fields. Missing or invalid values cannot trigger unlinking or push local defaults over cloud content.
 
 Empty model/provider strings remain accepted because the backend permits them; an empty remote model never clears the local selection.
+
+
+### Waits for ownership adoption already in progress
+
+A wallet resolver encountering a legacy link during an active sync waits for that same pass to persist its backend ownership. The real resolver and sync engine must produce one list request and a valid link, not an early foreign classification.

@@ -458,8 +458,10 @@ export async function deleteProfileWithSync(
 // ── Sync pass ───────────────────────────────────────────────────────────────
 
 // Single-flight: overlapping runs (auto-on-mount + manual click) would race on
-// the state files, so a second request just reports the pass already running.
+// the state files. All callers await the same pass, including wallet flows
+// that need its newly persisted ownership fields before proceeding.
 let running = false;
+let activeSync: Promise<AgentSyncResult> | null = null;
 let lastResult: AgentSyncResult | null = null;
 
 export function getAgentSyncStatus(): AgentSyncStatus {
@@ -518,25 +520,19 @@ async function applyPull(
  * and local profiles for cloud-only agents, and unlink mappings whose cloud
  * agent disappeared. Never deletes anything on either side.
  */
-export async function syncAgents(): Promise<AgentSyncResult> {
-  if (running) {
-    return (
-      lastResult ?? {
-        status: "error",
-        error: "A sync is already running.",
-        outcomes: [],
-        finishedAt: Date.now(),
-      }
-    );
-  }
+export function syncAgents(): Promise<AgentSyncResult> {
+  if (activeSync) return activeSync;
   running = true;
-  try {
-    const result = await withProfileOperation(runSyncPass);
-    lastResult = result;
-    return result;
-  } finally {
-    running = false;
-  }
+  activeSync = withProfileOperation(runSyncPass)
+    .then((result) => {
+      lastResult = result;
+      return result;
+    })
+    .finally(() => {
+      running = false;
+      activeSync = null;
+    });
+  return activeSync;
 }
 
 async function runSyncPass(): Promise<AgentSyncResult> {
