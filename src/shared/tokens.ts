@@ -68,17 +68,14 @@ export function formatTokenBalanceFull(raw: string, decimals: number): string {
   const trimmedFrac = fractionalPart.replace(/0+$/, "");
 
   if (integerPart !== "0") {
-    // Trim again after capping: the cut can land on a zero that was only
-    // interior before (1.20001 → "20001" → "2000"), and those zeros are
-    // trailing once the digits behind them are dropped.
+    // Truncation can expose trailing zeros (1.20001 → "2000").
     const capped = trimmedFrac.slice(0, 4).replace(/0+$/, "");
     return capped ? `${integerPart}.${capped}` : integerPart;
   }
 
   if (firstNonZero >= 4) return "< 0.0001";
   const significantDigits = trimmedFrac.slice(firstNonZero);
-  // Same cut, same re-trim (0.0001200005 → "1200005" → "1200" → "12"). The
-  // leading digit is non-zero, so this always keeps at least one digit.
+  // The first significant digit is nonzero, so trimming keeps at least one.
   const visible = significantDigits.slice(0, 4).replace(/0+$/, "");
   return `0.${"0".repeat(firstNonZero)}${visible}`;
 }
